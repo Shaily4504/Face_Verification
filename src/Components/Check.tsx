@@ -4,6 +4,7 @@ import * as faceapi from '@vladmandic/face-api'
 import * as tf from '@tensorflow/tfjs'
 import '@tensorflow/tfjs-backend-webgl'
 import * as api from '../Services/api' // must export identifyStudent(apiBase, payload)
+import VirtualID from './VirtualID'
 
 export default function Check({ apiBase }: { apiBase: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -11,6 +12,8 @@ export default function Check({ apiBase }: { apiBase: string }) {
   const [loadingModels, setLoadingModels] = useState(true)
   const [identifying, setIdentifying] = useState(false)
   const [result, setResult] = useState<{ studentId: string; name: string; score?: number } | null>(null)
+  const [cardOpen, setCardOpen] = useState(false)
+  const [cardStudent, setCardStudent] = useState<{ studentId:string; name:string; } | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -75,9 +78,13 @@ export default function Check({ apiBase }: { apiBase: string }) {
       setStatus('Identifying...')
       const resp = await (api as any).identifyStudent(apiBase, { embedding }) // ensure api.identifyStudent exists
       const data = resp?.data
+      
       if (data?.matched) {
+        const student = { studentId: data.student.studentId, name: data.student.name }
         setResult({ studentId: data.student.studentId, name: data.student.name, score: Number(data.score?.toFixed?.(3) ?? 0) })
         setStatus(`Matched: ${data.student.name}`)
+        setCardStudent(student)
+        setCardOpen(true)
       } else {
         setResult(null)
         setStatus(`No match (bestScore: ${data?.bestScore ?? 'N/A'})`)
@@ -87,6 +94,37 @@ export default function Check({ apiBase }: { apiBase: string }) {
       setStatus(err?.response?.data?.error ?? err?.message ?? 'Identify error')
     } finally {
       setIdentifying(false)
+    }
+  }
+
+    async function handleMarkPresent() {
+    if (!cardStudent) {
+      setCardOpen(false)
+      return
+    }
+
+        try {
+      setStatus('Marking present...')
+      // Prefer api helper if available
+      if ((api as any).markPresent) {
+        await (api as any).markPresent(apiBase, { studentId: cardStudent.studentId })
+      } else {
+        // fallback: POST to /attendance/mark (add this route on server or change to your API)
+        await fetch(`${apiBase}/attendance/mark`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ studentId: cardStudent.studentId })
+        })
+      }
+      setStatus('Marked present ✅')
+      // small success UI: you can trigger confetti here
+      // import confetti from 'canvas-confetti'; confetti({ particleCount: 40, spread: 80 })
+    } catch (e) {
+      console.error('mark present error', e)
+      setStatus('Failed to mark present')
+    } finally {
+      setCardOpen(false)
+      setCardStudent(null)
     }
   }
 
@@ -113,6 +151,13 @@ export default function Check({ apiBase }: { apiBase: string }) {
           </div>
         ) : null}
       </div>
+      <VirtualID
+        open={cardOpen}
+        student={cardStudent}
+        autoHideMs={6000}
+        onClose={() => { setCardOpen(false); setCardStudent(null) }}
+        onMarkPresent={handleMarkPresent}
+      />
     </div>
   )
 }
